@@ -8,6 +8,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/joho/godotenv"
 )
 
 // Config: application configuration. One instance per process, created by Load and
@@ -33,7 +35,13 @@ type Config struct {
 
 // Load reads the environment, applies defaults and returns an error if anything
 // required is missing. Called once at startup.
+// A .env file in the working directory is read first; real environment variables
+// win over it.
 func Load() (*Config, error) {
+	// .env is optional, so a missing file is not an error. godotenv leaves existing
+	// environment variables untouched.
+	_ = godotenv.Load()
+
 	c := &Config{
 		BotToken:    os.Getenv("BOT_TOKEN"),
 		DatabaseURL: os.Getenv("DATABASE_URL"),

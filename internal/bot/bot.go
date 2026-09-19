@@ -14,15 +14,17 @@ import (
 	tgbot "github.com/go-telegram/bot"
 
 	"lab042.ru/doomsdaycalc/internal/config"
+	"lab042.ru/doomsdaycalc/internal/service"
 )
 
 // Deps holds everything the handlers need. Grows as features are added.
 // A single struct beats many positional args: adding a dependency later does not
 // force changes in every constructor call.
 type Deps struct {
-	Cfg *config.Config
-	Log *slog.Logger
-	// Here later: Users domain.UserService, Savings domain.SavingsService.
+	Cfg   *config.Config
+	Log   *slog.Logger
+	Users *service.UserService
+	// Here later: Savings *service.SavingsService.
 }
 
 // Bot wraps the Telegram API client together with the handler dependencies.
@@ -31,9 +33,8 @@ type Bot struct {
 	deps *Deps
 }
 
-// New builds the Bot and registers all handlers.
-// Every update goes through the single default handler (b.route); handlers
-// registered explicitly are matched first and take priority.
+// New builds the Bot and registers the default handler.
+// Every update goes through the single default handler (b.route).
 // b.route is a method value captured before b.api is assigned. Handlers only run on
 // updates, long after New returns, so this is safe.
 func New(deps *Deps) (*Bot, error) {
@@ -49,9 +50,6 @@ func New(deps *Deps) (*Bot, error) {
 		return nil, fmt.Errorf("create bot: %w", err)
 	}
 	b.api = api
-
-	// Explicitly registered handlers are matched before the default one.
-	api.RegisterHandler(tgbot.HandlerTypeMessageText, "/start", tgbot.MatchTypeExact, b.onStart)
 
 	return b, nil
 }

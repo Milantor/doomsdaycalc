@@ -13,6 +13,7 @@ import (
 
 	"lab042.ru/doomsdaycalc/internal/bot"
 	"lab042.ru/doomsdaycalc/internal/config"
+	"lab042.ru/doomsdaycalc/internal/service"
 	"lab042.ru/doomsdaycalc/internal/storage/postgres"
 )
 
@@ -50,7 +51,8 @@ func run() error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
-	deps := &bot.Deps{Cfg: cfg, Log: log}
+	users := service.NewUserService(postgres.NewUserRepo(pool))
+	deps := &bot.Deps{Cfg: cfg, Log: log, Users: users}
 	b, err := bot.New(deps)
 	if err != nil {
 		return fmt.Errorf("bot: %w", err)
