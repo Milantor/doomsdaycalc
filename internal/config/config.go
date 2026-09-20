@@ -35,7 +35,7 @@ type Config struct {
 
 // Load reads the environment, applies defaults and returns an error if anything
 // required is missing. Called once at startup.
-// A .env file in the working directory is read first; real environment variables
+// A .env file in the working directory is read first; variables from the shell
 // win over it.
 func Load() (*Config, error) {
 	// .env is optional, so a missing file is not an error. godotenv leaves existing

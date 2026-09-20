@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"math/big"
+	"time"
+)
 
 // Progress calculation: pure, no clock/database/Telegram. `now` comes in as a
 // parameter, which makes it testable without any I/O.
@@ -83,6 +86,12 @@ func ComputeStatus(g Goal, deposits []Deposit, rate ExchangeRate, now time.Time)
 		}
 	}
 
+	// Pace counts whole days and the day in progress counts, so the installment for that
+	// day shows at once. The anchor is the start of the creation day and the pace reference
+	// the end of the current day; both keep the figures steady within the day.
+	anchor := startOfDay(g.CreatedAt, loc)
+	paceRef := startOfToday.AddDate(0, 0, 1)
+
 	st := Status{
 		Saved:       rate.Convert(deposited),
 		SavedToday:  rate.Convert(today),
@@ -92,7 +101,7 @@ func ComputeStatus(g Goal, deposits []Deposit, rate ExchangeRate, now time.Time)
 		Tiers:       make(map[Tier]TierStatus, len(Tiers)),
 	}
 	for _, t := range Tiers {
-		ts := tierStatus(st.Saved, g.Targets[t], g.CreatedAt, g.Deadline, now, st.DaysLeft, st.MonthsLeft)
+		ts := tierStatus(st.Saved, g.Targets[t], anchor, g.Deadline, paceRef, st.DaysLeft, st.MonthsLeft)
 		if ts.Reached {
 			st.ReachedTier = t // Tiers is ascending, so this ends at the highest reached
 		}
@@ -101,8 +110,10 @@ func ComputeStatus(g Goal, deposits []Deposit, rate ExchangeRate, now time.Time)
 	return st
 }
 
-// tierStatus: computes one tier; daysLeft and monthsLeft are shared by all.
-func tierStatus(saved, target Money, created, deadline, now time.Time, daysLeft, monthsLeft int) TierStatus {
+// tierStatus: computes one tier; daysLeft and monthsLeft are shared by all. anchor is the
+// start of the creation day and paceRef the end of the current day, the two points the pace
+// counts between.
+func tierStatus(saved, target Money, anchor, deadline, paceRef time.Time, daysLeft, monthsLeft int) TierStatus {
 	ts := TierStatus{Target: target}
 	if saved >= target {
 		ts.Reached = true
@@ -114,7 +125,7 @@ func tierStatus(saved, target Money, created, deadline, now time.Time, daysLeft,
 
 	// Steady pace is what should already be saved by now. Falling below it means
 	// arrears, which is why the next PerDay is higher.
-	expected := steadyPace(target, created, deadline, now)
+	expected := steadyPace(target, anchor, deadline, paceRef)
 	ts.OnTrack = saved >= expected
 	if saved < expected {
 		ts.Behind = expected - saved
@@ -122,22 +133,27 @@ func tierStatus(saved, target Money, created, deadline, now time.Time, daysLeft,
 	return ts
 }
 
-// steadyPace: share of the target that should be saved by now if money were set
-// aside evenly from CreatedAt to Deadline. Empty window means the whole target is
-// due; before CreatedAt nothing is due.
-func steadyPace(target Money, created, deadline, now time.Time) Money {
-	total := deadline.Sub(created)
+// steadyPace: share of the target due by paceRef if money were set aside evenly from the
+// anchor to Deadline. paceRef is the end of the current day, so a day the goal is held
+// counts in full and the pace moves once a day. Empty window means the whole target is due;
+// before the anchor nothing is due.
+func steadyPace(target Money, anchor, deadline, paceRef time.Time) Money {
+	total := deadline.Sub(anchor)
 	if total <= 0 {
 		return target
 	}
-	elapsed := now.Sub(created)
+	elapsed := paceRef.Sub(anchor)
 	if elapsed <= 0 {
 		return 0
 	}
 	if elapsed > total {
 		elapsed = total
 	}
-	return Money(int64(target) * int64(elapsed) / int64(total))
+	// A nanosecond elapsed time times a large target passes int64 max, so the product
+	// goes through big.Int. Division truncates, as before.
+	num := new(big.Int).Mul(big.NewInt(int64(target)), big.NewInt(int64(elapsed)))
+	num.Quo(num, big.NewInt(int64(total)))
+	return Money(num.Int64())
 }
 
 // startOfDay: midnight of the calendar day of now, in loc.

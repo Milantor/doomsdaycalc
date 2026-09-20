@@ -29,8 +29,20 @@ func (s *UserService) Touch(ctx context.Context, u domain.User) (domain.User, er
 	return s.users.Upsert(ctx, u)
 }
 
+// Get returns the stored user with the given Telegram id, or domain.ErrNotFound.
+// Needed when a message is pushed into someone elses chat and the language has to be
+// resolved from their stored profile.
+func (s *UserService) Get(ctx context.Context, id int64) (domain.User, error) {
+	return s.users.Get(ctx, id)
+}
+
 // Delete removes the user. Related rows (goals, deposits, scenario state) cascade
 // away.
 func (s *UserService) Delete(ctx context.Context, id int64) error {
 	return s.users.Delete(ctx, id)
+}
+
+// ListIDs returns the Telegram ids of every known user, for sending to everyone.
+func (s *UserService) ListIDs(ctx context.Context) ([]int64, error) {
+	return s.users.ListIDs(ctx)
 }

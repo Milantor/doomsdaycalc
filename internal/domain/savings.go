@@ -2,7 +2,7 @@
 // No Telegram/SQL/network/etc: only functions and plain structs. Time is
 // passed in, avoid using time.Now(). Money is int64 minor units.
 // External dependencies are interfaces declared here.
-// Dependencies point one way: bot -> domain <- storage.
+// Dependencies point one way: bot -> service -> domain <- storage.
 package domain
 
 import (
@@ -19,6 +19,9 @@ const (
 	CurrencyUSD Currency = "USD"
 )
 
+// Currencies: every currency the domain knows.
+var Currencies = []Currency{CurrencyRUB, CurrencyEUR, CurrencyUSD}
+
 // Exponent: number of decimal digits in one minor unit, e.g. 2 for RUB. Needed to
 // format Money, since a raw integer has no decimal point.
 func (c Currency) Exponent() int {
@@ -28,6 +31,17 @@ func (c Currency) Exponent() int {
 	default:
 		return 2
 	}
+}
+
+// Valid: true when the code is in Currencies. Scans the set, so adding a currency
+// is one constant plus one slice entry.
+func (c Currency) Valid() bool {
+	for _, known := range Currencies {
+		if c == known {
+			return true
+		}
+	}
+	return false
 }
 
 // Money: amount in minor units (kopecks/cents).
@@ -103,6 +117,7 @@ type GoalRepository interface {
 	Create(ctx context.Context, g Goal) (Goal, error)
 	Get(ctx context.Context, id int64) (Goal, error)
 	ListByUser(ctx context.Context, userID int64) ([]Goal, error)
+	// TODO: i need that? no caller yet, kept for goal editing.
 	SetActive(ctx context.Context, id int64, active bool) error
 }
 
@@ -110,7 +125,6 @@ type GoalRepository interface {
 type DepositRepository interface {
 	Add(ctx context.Context, d Deposit) (Deposit, error)
 	ListByGoal(ctx context.Context, goalID int64) ([]Deposit, error)
-	SumByGoal(ctx context.Context, goalID int64) (Money, error)
 }
 
 // ComputeStatus, progress calculation, is in status.go with its tests.

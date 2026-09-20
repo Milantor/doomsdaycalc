@@ -70,14 +70,3 @@ ORDER BY happened_at, id`
 	}
 	return out, nil
 }
-
-// SumByGoal: net amount put aside for a goal (withdrawals subtracted).
-func (r *DepositRepo) SumByGoal(ctx context.Context, goalID int64) (domain.Money, error) {
-	const q = `SELECT COALESCE(SUM(amount), 0) FROM deposits WHERE goal_id = $1`
-
-	var sum int64
-	if err := r.pool.QueryRow(ctx, q, goalID).Scan(&sum); err != nil {
-		return 0, fmt.Errorf("sum deposits of goal %d: %w", goalID, err)
-	}
-	return domain.Money(sum), nil
-}

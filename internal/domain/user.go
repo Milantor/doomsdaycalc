@@ -29,4 +29,7 @@ type UserRepository interface {
 	// Delete hard-deletes the user and, via ON DELETE CASCADE, everything else
 	// that belongs to them.
 	Delete(ctx context.Context, id int64) error
+	// ListIDs returns the Telegram ids of every known user, oldest first. Used to send
+	// a scenario or a notice to everyone.
+	ListIDs(ctx context.Context) ([]int64, error)
 }

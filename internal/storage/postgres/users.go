@@ -66,6 +66,28 @@ func (r *UserRepo) Get(ctx context.Context, id int64) (domain.User, error) {
 	return u, nil
 }
 
+// ListIDs returns the Telegram ids of every known user, oldest first.
+func (r *UserRepo) ListIDs(ctx context.Context) ([]int64, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id FROM users ORDER BY created_at, id`)
+	if err != nil {
+		return nil, fmt.Errorf("list user ids: %w", err)
+	}
+	defer rows.Close()
+
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan user id: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate user ids: %w", err)
+	}
+	return out, nil
+}
+
 // Delete hard-deletes the user. Related rows (goals, deposits, scenario state)
 // cascade away.
 func (r *UserRepo) Delete(ctx context.Context, id int64) error {

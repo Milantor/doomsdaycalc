@@ -1,8 +1,11 @@
 package bot
 
 import (
+	"strconv"
+
 	"github.com/go-telegram/bot/models"
 
+	"lab042.ru/doomsdaycalc/internal/domain"
 	"lab042.ru/doomsdaycalc/internal/i18n"
 )
 
@@ -12,15 +15,17 @@ import (
 func mainKeyboard(m i18n.Messages) models.ReplyKeyboardMarkup {
 	return models.ReplyKeyboardMarkup{
 		Keyboard: [][]models.KeyboardButton{
-			{{Text: m.BtnAdd}, {Text: m.BtnWithdraw}},
+			{{Text: m.BtnWithdraw}, {Text: m.BtnAdd}},
 			{{Text: m.BtnStatus}},
+			{{Text: m.BtnOther}},
 		},
 		ResizeKeyboard: true, // fit the keyboard to the buttons
 	}
 }
 
-// tiersKeyboard: the three saving tiers as inline buttons. Callback data uses the
-// "dep:" prefix that onCallback parses: "dep:min" | "dep:ok" | "dep:max".
+// tiersKeyboard: the three saving tiers as inline buttons with "dep:min" | "dep:ok" |
+// "dep:max" callback data. Not wired to onCallback yet.
+// TODO: i need that? maybe for goal editing.
 func tiersKeyboard(m i18n.Messages) models.InlineKeyboardMarkup {
 	return models.InlineKeyboardMarkup{
 		InlineKeyboard: [][]models.InlineKeyboardButton{
@@ -31,4 +36,17 @@ func tiersKeyboard(m i18n.Messages) models.InlineKeyboardMarkup {
 			},
 		},
 	}
+}
+
+// goalsKeyboard: the users goals as inline buttons, one per row. Callback data is
+// "<prefix>:<goal id>", so onCallback can tell which goal was picked and for what.
+func goalsKeyboard(prefix string, goals []domain.Goal) models.InlineKeyboardMarkup {
+	rows := make([][]models.InlineKeyboardButton, 0, len(goals))
+	for _, g := range goals {
+		rows = append(rows, []models.InlineKeyboardButton{{
+			Text:         g.Title,
+			CallbackData: prefix + ":" + strconv.FormatInt(g.ID, 10),
+		}})
+	}
+	return models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }

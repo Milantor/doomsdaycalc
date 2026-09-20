@@ -21,10 +21,11 @@ import (
 // A single struct beats many positional args: adding a dependency later does not
 // force changes in every constructor call.
 type Deps struct {
-	Cfg   *config.Config
-	Log   *slog.Logger
-	Users *service.UserService
-	// Here later: Savings *service.SavingsService.
+	Cfg       *config.Config
+	Log       *slog.Logger
+	Users     *service.UserService
+	Savings   *service.SavingsService
+	Scenarios *service.ScenarioService
 }
 
 // Bot wraps the Telegram API client together with the handler dependencies.

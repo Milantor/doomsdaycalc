@@ -52,7 +52,9 @@ func run() error {
 	}
 
 	users := service.NewUserService(postgres.NewUserRepo(pool))
-	deps := &bot.Deps{Cfg: cfg, Log: log, Users: users}
+	savings := service.NewSavingsService(postgres.NewGoalRepo(pool), postgres.NewDepositRepo(pool))
+	scenarios := service.NewScenarioService(postgres.NewScenarioRepo(pool), savings)
+	deps := &bot.Deps{Cfg: cfg, Log: log, Users: users, Savings: savings, Scenarios: scenarios}
 	b, err := bot.New(deps)
 	if err != nil {
 		return fmt.Errorf("bot: %w", err)
