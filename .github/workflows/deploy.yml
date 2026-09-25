@@ -1,0 +1,87 @@
+# CI/CD. Pull request to main runs checks only. Push to main runs checks,
+# builds a static linux/amd64 binary, and copies it to the server over ssh.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test ./... -count=1
+
+  deploy:
+    name: deploy
+    needs: checks
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: build
+        run: |
+          set -euo pipefail
+          version="${GITHUB_SHA::7}"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+            -ldflags="-s -w -X main.version=${version}" -o doomsdaycalc ./cmd/bot
+      - name: deploy
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          PORT: ${{ secrets.DEPLOY_PORT }}
+          USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          scp -i ~/.ssh/deploy -P "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes doomsdaycalc "$USER@$HOST:/opt/doomsdaycalc/doomsdaycalc.new"
+          ssh -i ~/.ssh/deploy -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes "$USER@$HOST" '
+            set -eu
+            chmod 755 /opt/doomsdaycalc/doomsdaycalc.new
+            mv /opt/doomsdaycalc/doomsdaycalc.new /opt/doomsdaycalc/doomsdaycalc
+            since=$(date "+%Y-%m-%d %H:%M:%S")
+            sudo systemctl restart doomsdaycalc
+            ok=0
+            for i in $(seq 1 20); do
+              if journalctl -u doomsdaycalc --since "$since" -o cat 2>/dev/null | grep -q "\"msg\":\"bot started\""; then ok=1; break; fi
+              sleep 1
+            done
+            journalctl -u doomsdaycalc --since "$since" -n 50 --no-pager || true
+            if [ "$ok" -ne 1 ]; then
+              echo "no ready signal after restart" >&2
+              exit 1
+            fi
+          '

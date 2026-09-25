@@ -36,7 +36,7 @@ into the message text; `keyboards.go` builds the reply and inline keyboards;
 
 **storage/postgres** is SQL. Implements domain interfaces.
 
-**i18n** is string catalog for three languages.
+**i18n** is string catalog for four languages.
 
 **config** reads `.env` and env, validates, returns `Config`.
 
@@ -102,7 +102,7 @@ deposit by fixed amounts (5000 and 15000 whole units), a withdrawal by its share
 of the saved total it comes out of (10 and 25 percent). `Answer` reports the mood
 in `Outcome.Mood`, which also carries the next node and whether the dialogue runs
 on. A stored goal, a cancel and `ResultNone` leave it `MoodNone`. i18n holds one
-pool of phrases per mood and `TestCatalogComplete` forces all three languages;
+pool of phrases per mood and `TestCatalogComplete` forces every language;
 `moodPhrase` in bot picks one at random and falls back to the plain done line.
 
 `Result` says what a finished dialogue stores: `ResultGoal` saves a goal,
@@ -122,7 +122,7 @@ Russian) only via `users.ui_language`, per-user override, set by the `lang` comm
 catalog entry.
 
 `Messages` is struct with one field per string. `TestCatalogComplete` fails on
-empty field, so adding a string forces all three languages. Reply keyboard
+empty field, so adding a string forces every language. Reply keyboard
 buttons match by localized label, so intent resolution needs user catalog.
 
 ## Routing
@@ -132,9 +132,10 @@ One handler. `b.route`. No per-command handlers.
 Dispatch order: active dialogue first, command/reply-keyboard button second,
 callback query third. Order in `handlers.go`.
 
-Commands are plain text without slash: `status`, `privacy`, `data remove all`, `lang`,
-`help`. Admin commands take arguments: `send <scenario> <id|all>` and `broadcast
-<text>`. Only `/start` has slash, Telegram sends it that way.
+Commands are plain text without slash: `status`, `privacy`, `data remove all`,
+`lang`, `help`. Admin commands take arguments: `send <scenario> <id|all>` and
+`broadcast <text>`. Only `/start` has slash, Telegram sends it that way. The
+Other button sends the same help text.
 
 ## Storage
 
@@ -170,17 +171,39 @@ for same result.
 **FSM as data plus one function.** Adding question is adding node. Control
 flow stays. `Step` keeps same size.
 
-**Strings in i18n.** Three languages plus override. Inline strings break
+**Strings in i18n.** Four languages plus override. Inline strings break
 `TestCatalogComplete`.
 
 **One handler.** Per-command handlers duplicate dispatch. `resolveIntent` is
 one place that maps update to action.
 
+## Deploy
+
+Native binary and systemd unit. No Docker.
+
+GitHub Actions in `.github/workflows/deploy.yml`. A PR to `main` runs checks
+only. A push to `main` runs checks, builds `linux/amd64` with `CGO_ENABLED=0`,
+and copies the binary to the server.
+
+Server layout: binary in `/opt/doomsdaycalc`, unit `doomsdaycalc.service`,
+secrets in `/etc/doomsdaycalc/env` (root, mode 600) read through
+`EnvironmentFile=`. Service user `doomsdaycalc` has no shell. Deploy user
+`deploy` owns the binary dir and can restart the unit.
+
+Deploy step: upload `doomsdaycalc.new`, `mv` over the old file, restart, then wait
+for the `bot started` log line. `Type=simple` marks the unit active before the app
+is ready, so the log line is the readiness signal. Rollback is a rerun of the last
+passing Actions run.
+
+Migrations run on startup, so a deploy needs no DB step. CI passes the git sha
+into the binary through `-ldflags -X main.version`.
+
 ## Roadmap
 
 Done: skeleton and config, domain types with migrations, the status math,
 goal and deposit services with their handlers, the dialogue FSM, the
-broadcast, and the language command.
+broadcast, the language and help commands, and the privacy command with
+`data remove all`.
 
 Still open, roughly in order:
 
@@ -193,9 +216,6 @@ table), so the operator can read what people write back and answer them.
 **Currency.** Exchange rates from an API, with a cache and a background
 refresher. `ExchangeRate` already sits between the two currencies;
 `ComputeStatus` stays as it is.
-
-**Privacy.** The `privacy` command shows the privacy policy text, and
-`data remove all` drops every row of the user.
 
 **Archive.** Write-only and age-encrypted, kept outside the domain DB. Scope
 is incoming messages the bot cannot place, plus the admin chat. Outgoing bot
