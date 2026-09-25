@@ -17,6 +17,10 @@ import (
 	"lab042.ru/doomsdaycalc/internal/storage/postgres"
 )
 
+// version is stamped at build time with -ldflags "-X main.version=<sha>". A
+// local build keeps the default.
+var version = "dev"
+
 func main() {
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
@@ -33,6 +37,7 @@ func run() error {
 	}
 	log := newLogger(cfg)
 	slog.SetDefault(log)
+	log.Info("startup", "version", version)
 
 	// ctx is cancelled on SIGINT/SIGTERM, which stops polling and any in-flight
 	// request.

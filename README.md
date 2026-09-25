@@ -2,6 +2,11 @@
 
 # КАЛЬКУЛЯТОР СУДНОГО ДНЯ!!!
 
+[![deploy](https://github.com/milantor/doomsdaycalc/actions/workflows/deploy.yml/badge.svg)](https://github.com/milantor/doomsdaycalc/actions/workflows/deploy.yml)
+[![go](https://img.shields.io/badge/go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![license](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+[![telegram](https://img.shields.io/badge/telegram-%40DOOMSDAYCALC__bot-26A5E4?logo=telegram&logoColor=white)](https://t.me/DOOMSDAYCALC_bot)
+
 Перед началом: я не *шарю* за Go. Я на нем писал пару приколов пока учился первый месяц в ~~шараге~~ институте и как бы общее понимание имею, но опыта в нем немного.
 
 ### Че это за проект вообще?
@@ -20,7 +25,7 @@
 Q: Почему на аватарке бота фембой?  
 A: Потому что хайп  
 Q: А где посмотреть на бота то?  
-A: t.me/DOOMSDAYCALC_bot i suppose  
+A: Я добавил прикольную кнопку в самом верху README  
 Q: Как это собрать?  
 A: А *зачем* тебе это собирать? Ну, это Go, так что со сборкой тут не должно быть проблем, ну, ни у кого.. Клонируешь репозиторий, пишешь в корне `go run ./cmd/bot` и радуешься жизни. Может быть `go install lab042.ru/doomsdaycalc` что-нибудь даст, я не проверял, но должно работать  
 Q: Если ты сказал, что времени в обрез, зачем пишешь этот Readme, и тем более какой-то отдел с идиотскими выдуманными вопросами?  
