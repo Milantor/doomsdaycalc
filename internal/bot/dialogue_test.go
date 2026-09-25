@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"slices"
@@ -199,6 +200,17 @@ func (f *fakeUserRepo) Get(_ context.Context, id int64) (domain.User, error) {
 		return domain.User{}, domain.ErrNotFound
 	}
 	return u, nil
+}
+
+// SetLanguage keeps the override. Unknown user gives ErrNotFound, matching the repo.
+func (f *fakeUserRepo) SetLanguage(_ context.Context, id int64, lang domain.Lang) error {
+	u, ok := f.users[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	u.UILanguage = lang
+	f.users[id] = u
+	return nil
 }
 
 // Delete drops the user.
@@ -495,8 +507,9 @@ func TestDialogueWithdrawExactBalance(t *testing.T) {
 
 	feed(t, env, ctx, r, "100")
 
-	if got, want := env.sender.texts(), []string{m.ScenarioDone}; !slices.Equal(got, want) {
-		t.Fatalf("texts = %q, want %q", got, want)
+	// Withdrawing the whole pile is the big withdrawal mood.
+	if got := env.sender.texts(); len(got) != 1 || !slices.Contains(m.MoodWithdrawBig, got[0]) {
+		t.Fatalf("texts = %q, want one phrase from the big withdrawal pool", got)
 	}
 	if len(env.deposits.added) != 2 {
 		t.Fatalf("stored %d deposits, want 2", len(env.deposits.added))
@@ -510,7 +523,8 @@ func TestDialogueWithdrawExactBalance(t *testing.T) {
 }
 
 // TestDialogueDepositIgnoresBalance: the overdraw rule guards withdrawals only, so a
-// deposit over the saved total still finishes.
+// deposit over the saved total still finishes and answers with a phrase from the small
+// deposit pool.
 func TestDialogueDepositIgnoresBalance(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
@@ -530,8 +544,9 @@ func TestDialogueDepositIgnoresBalance(t *testing.T) {
 
 	feed(t, env, ctx, r, "500")
 
-	if got, want := env.sender.texts(), []string{m.ScenarioDone}; !slices.Equal(got, want) {
-		t.Fatalf("texts = %q, want %q", got, want)
+	// 500 rubles is under the mid threshold.
+	if got := env.sender.texts(); len(got) != 1 || !slices.Contains(m.MoodDepositSmall, got[0]) {
+		t.Fatalf("texts = %q, want one phrase from the small deposit pool", got)
 	}
 	if len(env.deposits.added) != 1 || env.deposits.added[0].Amount != 50000 {
 		t.Fatalf("deposits = %+v, want one 50000", env.deposits.added)
@@ -746,6 +761,114 @@ func TestCmdBroadcastUsage(t *testing.T) {
 	}
 }
 
+// TestCmdLangUsage: lang without an argument lists the arguments and changes nothing. An
+// empty argument and an unknown name both fall back to the list.
+func TestCmdLangUsage(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	m := i18n.Get(domain.LangEN)
+
+	if _, err := env.bot.deps.Users.Touch(ctx, domain.User{ID: 100, LanguageCode: "en"}); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	for _, text := range []string{"lang", "lang   ", "lang de", "lang ru extra"} {
+		env.sender.sent = nil
+		r := testReq(m, 100, 100, text)
+		if err := env.bot.cmdLang(ctx, env.sender, r); err != nil {
+			t.Fatalf("cmdLang(%q): %v", text, err)
+		}
+		if got := env.sender.texts(); !slices.Equal(got, []string{m.LangUsage}) {
+			t.Fatalf("cmdLang(%q) texts = %q, want [%q]", text, got, m.LangUsage)
+		}
+	}
+
+	u, err := env.users.Get(ctx, 100)
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	if u.UILanguage != "" {
+		t.Fatalf("ui_language = %q, want empty", u.UILanguage)
+	}
+}
+
+// TestCmdLangSwitches: lang with a known argument stores the override and answers in the
+// new language, keyboard included.
+func TestCmdLangSwitches(t *testing.T) {
+	cases := []struct {
+		name string
+		arg  string
+		want domain.Lang
+	}{
+		{"ru", "ru", domain.LangRU},
+		{"en", "en", domain.LangEN},
+		{"rofl", "rofl", domain.LangRofl},
+		{"uppercase rofl", "ROFL", domain.LangRofl},
+		{"sr", "sr", domain.LangSR},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			env := newTestEnv(t)
+			ctx := context.Background()
+			from := i18n.Get(domain.LangEN)
+
+			if _, err := env.bot.deps.Users.Touch(ctx, domain.User{ID: 100, LanguageCode: "en"}); err != nil {
+				t.Fatalf("seed user: %v", err)
+			}
+
+			r := testReq(from, 100, 100, "lang "+c.arg)
+			if err := env.bot.cmdLang(ctx, env.sender, r); err != nil {
+				t.Fatalf("cmdLang: %v", err)
+			}
+
+			u, err := env.users.Get(ctx, 100)
+			if err != nil {
+				t.Fatalf("get user: %v", err)
+			}
+			if u.UILanguage != c.want {
+				t.Fatalf("ui_language = %q, want %q", u.UILanguage, c.want)
+			}
+
+			want := fmt.Sprintf(i18n.Get(c.want).LangSet, c.want)
+			if got := env.sender.texts(); !slices.Equal(got, []string{want}) {
+				t.Fatalf("texts = %q, want [%q]", got, want)
+			}
+
+			// the confirmation carries the main keyboard in the new language
+			kb, ok := env.sender.sent[0].markup.(models.ReplyKeyboardMarkup)
+			if !ok {
+				t.Fatalf("no reply keyboard on the lang confirmation")
+			}
+			if kb.Keyboard[0][0].Text != i18n.Get(c.want).BtnWithdraw {
+				t.Fatalf("first button = %q, want the new language withdraw label", kb.Keyboard[0][0].Text)
+			}
+		})
+	}
+}
+
+// TestCmdHelp: help and the Other button send the help text in every language.
+func TestCmdHelp(t *testing.T) {
+	for _, lang := range []domain.Lang{domain.LangRU, domain.LangEN, domain.LangRofl, domain.LangSR} {
+		m := i18n.Get(lang)
+
+		env := newTestEnv(t)
+		ctx := context.Background()
+		r := testReq(m, 100, 100, "help")
+
+		if err := env.bot.cmdHelp(ctx, env.sender, r); err != nil {
+			t.Fatalf("%s: cmdHelp: %v", lang, err)
+		}
+		if got := env.sender.texts(); !slices.Equal(got, []string{m.Help}) {
+			t.Fatalf("%s: texts = %q, want [%q]", lang, got, m.Help)
+		}
+
+		// the Other button resolves to the same intent, so the router reaches cmdHelp
+		if resolveIntent(m, m.BtnOther) != intentHelp {
+			t.Fatalf("%s: Other button did not resolve to help", lang)
+		}
+	}
+}
+
 // TestNodeMarkup: a free-text node drops the keyboard, a button node becomes a reply
 // keyboard.
 func TestNodeMarkup(t *testing.T) {
@@ -765,5 +888,87 @@ func TestNodeMarkup(t *testing.T) {
 	}
 	if len(kb.Keyboard) != 1 || len(kb.Keyboard[0]) != 1 || kb.Keyboard[0][0].Text != "Go" {
 		t.Fatalf("keyboard = %+v, want one Go button", kb.Keyboard)
+	}
+}
+
+// TestMoodPhrase: a mood gives a phrase from its own pool in every language, MoodNone
+// gives the plain done line.
+func TestMoodPhrase(t *testing.T) {
+	for _, lang := range []domain.Lang{domain.LangRU, domain.LangEN, domain.LangRofl, domain.LangSR} {
+		m := i18n.Get(lang)
+
+		if got := moodPhrase(m, domain.MoodNone); got != m.ScenarioDone {
+			t.Errorf("%s: MoodNone gave %q, want %q", lang, got, m.ScenarioDone)
+		}
+
+		for _, mood := range domain.Moods {
+			pool := m.MoodPhrases(mood)
+			if len(pool) < 2 {
+				t.Fatalf("%s: mood %s has %d phrases, want at least 2", lang, mood, len(pool))
+			}
+
+			// A single draw only proves membership, so 200 draws check the pool is not
+			// stuck on one entry.
+			seen := map[string]bool{}
+			for i := 0; i < 200; i++ {
+				got := moodPhrase(m, mood)
+				if !slices.Contains(pool, got) {
+					t.Fatalf("%s: mood %s gave %q, not from its pool", lang, mood, got)
+				}
+				seen[got] = true
+			}
+			if len(seen) < 2 {
+				t.Errorf("%s: mood %s gave one phrase 200 times", lang, mood)
+			}
+		}
+	}
+}
+
+// TestDialogueMoneyMood: a finished money dialogue answers with a phrase from the pool of
+// its mood, deposit and withdrawal both.
+func TestDialogueMoneyMood(t *testing.T) {
+	cases := []struct {
+		name     string
+		scenario string
+		amount   string
+		saved    domain.Money
+		mood     domain.Mood
+	}{
+		{"small deposit", "add_deposit", "100", 0, domain.MoodDepositSmall},
+		{"mid deposit", "add_deposit", "7000", 0, domain.MoodDepositMid},
+		{"big deposit", "add_deposit", "20000", 0, domain.MoodDepositBig},
+		{"small withdrawal", "withdraw", "10", 100000, domain.MoodWithdrawSmall},
+		{"mid withdrawal", "withdraw", "150", 100000, domain.MoodWithdrawMid},
+		{"big withdrawal", "withdraw", "500", 100000, domain.MoodWithdrawBig},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			env := newTestEnv(t)
+			ctx := context.Background()
+			m := i18n.Get(domain.LangEN)
+			r := testReq(m, 100, 100, "")
+
+			g, err := env.goals.Create(ctx, domain.Goal{UserID: 100, Title: "Trip"})
+			if err != nil {
+				t.Fatalf("seed goal: %v", err)
+			}
+			if c.saved > 0 {
+				if _, err := env.deposits.Add(ctx, domain.Deposit{GoalID: g.ID, Amount: c.saved}); err != nil {
+					t.Fatalf("seed deposit: %v", err)
+				}
+			}
+			env.states.mustSave(t, domain.ScenarioState{
+				UserID:       100,
+				ScenarioName: c.scenario,
+				NodeID:       "ask_amount",
+				Vars:         map[string]string{scenario.VarGoal: strconv.FormatInt(g.ID, 10)},
+			})
+
+			feed(t, env, ctx, r, c.amount)
+
+			if got := env.sender.texts(); len(got) != 1 || !slices.Contains(m.MoodPhrases(c.mood), got[0]) {
+				t.Fatalf("texts = %q, want one phrase from the %s pool", got, c.mood)
+			}
+		})
 	}
 }

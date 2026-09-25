@@ -3,6 +3,8 @@ package bot
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math/rand/v2"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +47,8 @@ const (
 	intentDataRemoveAll
 	intentBroadcast
 	intentSend
+	intentLang
+	intentHelp
 )
 
 // String: intent label for logs.
@@ -66,6 +70,10 @@ func (i intent) String() string {
 		return "broadcast"
 	case intentSend:
 		return "send"
+	case intentLang:
+		return "lang"
+	case intentHelp:
+		return "help"
 	default:
 		return "none"
 	}
@@ -93,15 +101,22 @@ func resolveIntent(m i18n.Messages, text string) intent {
 		return intentBroadcast
 	case "send":
 		return intentSend
+	case "lang":
+		return intentLang
+	case "/help", "help", strings.ToLower(m.BtnOther):
+		return intentHelp
 	}
 
-	// "send <scenario> <target>" and "broadcast <text>" carry arguments, so they are
-	// matched by prefix. The handlers split the arguments themselves.
+	// "send <scenario> <target>", "broadcast <text>" and "lang <arg>" carry arguments,
+	// so they are matched by prefix. The handlers split the arguments themselves.
 	if strings.HasPrefix(text, "send ") {
 		return intentSend
 	}
 	if strings.HasPrefix(text, "broadcast ") {
 		return intentBroadcast
+	}
+	if strings.HasPrefix(text, "lang ") {
+		return intentLang
 	}
 	return intentNone
 }
@@ -166,6 +181,10 @@ func (b *Bot) handlerFor(in intent) func(context.Context, sender, req) error {
 		return b.cmdBroadcast
 	case intentSend:
 		return b.cmdSend
+	case intentLang:
+		return b.cmdLang
+	case intentHelp:
+		return b.cmdHelp
 	default:
 		return b.onFallback
 	}
@@ -365,6 +384,11 @@ func (b *Bot) renderStatus(ctx context.Context, api sender, r req, goalID int64)
 	return b.reply(ctx, api, r, formatStatus(g, st, r.m), true)
 }
 
+// cmdHelp lists the commands the bot understands.
+func (b *Bot) cmdHelp(ctx context.Context, api sender, r req) error {
+	return b.reply(ctx, api, r, r.m.Help, true)
+}
+
 // cmdPrivacy explains what data the bot stores and why.
 // TODO: link to PP on website
 func (b *Bot) cmdPrivacy(ctx context.Context, api sender, r req) error {
@@ -378,6 +402,28 @@ func (b *Bot) cmdDataRemoveAll(ctx context.Context, api sender, r req) error {
 		return err
 	}
 	return b.reply(ctx, api, r, r.m.DataRemoved, true)
+}
+
+// cmdLang switches the interface language, or explains the command without an argument.
+// With one it stores the override and answers in the new language, menu included.
+func (b *Bot) cmdLang(ctx context.Context, api sender, r req) error {
+	trimmed := strings.TrimSpace(r.msg.Text)
+	i := strings.IndexByte(trimmed, ' ')
+	if i < 0 {
+		return b.reply(ctx, api, r, r.m.LangUsage, true)
+	}
+
+	lang, ok := i18n.ParseExplicit(strings.TrimSpace(trimmed[i+1:]))
+	if !ok {
+		return b.reply(ctx, api, r, r.m.LangUsage, true)
+	}
+	if err := b.deps.Users.SetLanguage(ctx, r.user.ID, lang); err != nil {
+		return err
+	}
+
+	m := i18n.Get(lang)
+	r.m = m
+	return b.reply(ctx, api, r, fmt.Sprintf(m.LangSet, lang), true)
 }
 
 // cmdBroadcast sends one text to every known user. Admin-only: "broadcast <text>".
@@ -490,7 +536,7 @@ func (b *Bot) dialogue(ctx context.Context, api sender, r req) bool {
 	// A reply-keyboard button sends its label; the node knows which Data that means.
 	answer := node.ButtonData(r.m, text)
 
-	next, running, err := b.deps.Scenarios.Answer(ctx, st, answer, time.Now().UTC())
+	out, err := b.deps.Scenarios.Answer(ctx, st, answer, time.Now().UTC())
 	switch {
 	case errors.Is(err, service.ErrCancelled):
 		// Zero amount cancels the dialogue; the position is dropped already, so hand
@@ -499,8 +545,7 @@ func (b *Bot) dialogue(ctx context.Context, api sender, r req) bool {
 			b.deps.Log.Error("reply", "err", rerr)
 		}
 	case errors.Is(err, service.ErrOverdraw):
-		// The withdrawal is larger than the saved total; the position stays, so ask the
-		// amount again.
+		// A withdrawal over the saved total keeps the position, so ask the amount again.
 		if rerr := b.reply(ctx, api, r, r.m.Overdraw, false); rerr != nil {
 			b.deps.Log.Error("reply", "err", rerr)
 		}
@@ -508,7 +553,7 @@ func (b *Bot) dialogue(ctx context.Context, api sender, r req) bool {
 			b.deps.Log.Error("send node", "err", serr)
 		}
 	case errors.Is(err, service.ErrTierOrder):
-		// A target is below the tier before it; the position stays, so ask the amount
+		// A target is below the tier before it; the position stays, so ask the question
 		// again.
 		if rerr := b.reply(ctx, api, r, r.m.TierOrder, false); rerr != nil {
 			b.deps.Log.Error("reply", "err", rerr)
@@ -519,20 +564,20 @@ func (b *Bot) dialogue(ctx context.Context, api sender, r req) bool {
 	case err != nil:
 		// The answer did not fit, or the goal could not be built. Re-ask while the
 		// dialogue is still on, otherwise hand the menu back.
-		if rerr := b.reply(ctx, api, r, r.m.BadAnswer, !running); rerr != nil {
+		if rerr := b.reply(ctx, api, r, r.m.BadAnswer, !out.Running); rerr != nil {
 			b.deps.Log.Error("reply", "err", rerr)
 		}
-		if running {
+		if out.Running {
 			if serr := b.sendNode(ctx, api, r, node); serr != nil {
 				b.deps.Log.Error("send node", "err", serr)
 			}
 		}
-	case running:
-		if serr := b.sendNode(ctx, api, r, next); serr != nil {
+	case out.Running:
+		if serr := b.sendNode(ctx, api, r, out.Node); serr != nil {
 			b.deps.Log.Error("send node", "err", serr)
 		}
 	default:
-		if rerr := b.reply(ctx, api, r, r.m.ScenarioDone, true); rerr != nil {
+		if rerr := b.reply(ctx, api, r, moodPhrase(r.m, out.Mood), true); rerr != nil {
 			b.deps.Log.Error("reply", "err", rerr)
 		}
 	}
@@ -596,4 +641,14 @@ func nodeMarkup(node scenario.Node, m i18n.Messages) models.ReplyMarkup {
 		rows = append(rows, []models.KeyboardButton{{Text: btn.Label(m)}})
 	}
 	return models.ReplyKeyboardMarkup{Keyboard: rows, ResizeKeyboard: true}
+}
+
+// moodPhrase: the reply after a finished dialogue. A money mood gives one random phrase
+// from its pool; MoodNone gives the plain done line.
+func moodPhrase(m i18n.Messages, mood domain.Mood) string {
+	pool := m.MoodPhrases(mood)
+	if len(pool) == 0 {
+		return m.ScenarioDone
+	}
+	return pool[rand.IntN(len(pool))]
 }

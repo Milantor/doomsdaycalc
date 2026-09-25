@@ -97,6 +97,14 @@ asks the amount again and reports `ErrOverdraw`; the bot shows the overdraw
 reply and repeats the question. `Balance` is the sum of the goals signed
 deposits, and a negative sum counts as nothing saved.
 
+A money move ends with a phrase for its size. `domain.Mood` buckets the move: a
+deposit by fixed amounts (5000 and 15000 whole units), a withdrawal by its share
+of the saved total it comes out of (10 and 25 percent). `Answer` reports the mood
+in `Outcome.Mood`, which also carries the next node and whether the dialogue runs
+on. A stored goal, a cancel and `ResultNone` leave it `MoodNone`. i18n holds one
+pool of phrases per mood and `TestCatalogComplete` forces all three languages;
+`moodPhrase` in bot picks one at random and falls back to the plain done line.
+
 `Result` says what a finished dialogue stores: `ResultGoal` saves a goal,
 `ResultDeposit` and `ResultWithdraw` save one signed deposit, `ResultNone`
 clears the position.
@@ -108,8 +116,10 @@ reads it back and opens the matching money dialogue or renders status.
 
 ## i18n
 
-Catalogs: ru, en, rofl. ru/en from Telegram `language_code`. rofl only via
-`users.ui_language`, per-user override.
+Catalogs: ru, en, rofl, sr. ru/en/sr from Telegram `language_code`. rofl (joke
+Russian) only via `users.ui_language`, per-user override, set by the `lang` command.
+`ParseExplicit` takes an exact catalog name, so the command has one argument per
+catalog entry.
 
 `Messages` is struct with one field per string. `TestCatalogComplete` fails on
 empty field, so adding a string forces all three languages. Reply keyboard
@@ -122,9 +132,9 @@ One handler. `b.route`. No per-command handlers.
 Dispatch order: active dialogue first, command/reply-keyboard button second,
 callback query third. Order in `handlers.go`.
 
-Commands are plain text without slash: `status`, `privacy`, `data remove all`.
-Admin commands take arguments: `send <scenario> <id|all>` and `broadcast <text>`.
-Only `/start` has slash, Telegram sends it that way.
+Commands are plain text without slash: `status`, `privacy`, `data remove all`, `lang`,
+`help`. Admin commands take arguments: `send <scenario> <id|all>` and `broadcast
+<text>`. Only `/start` has slash, Telegram sends it that way.
 
 ## Storage
 
@@ -169,8 +179,8 @@ one place that maps update to action.
 ## Roadmap
 
 Done: skeleton and config, domain types with migrations, the status math,
-goal and deposit services with their handlers, the dialogue FSM, and the
-broadcast.
+goal and deposit services with their handlers, the dialogue FSM, the
+broadcast, and the language command.
 
 Still open, roughly in order:
 

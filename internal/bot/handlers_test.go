@@ -13,6 +13,7 @@ func TestResolveIntent(t *testing.T) {
 	ru := i18n.Get(domain.LangRU)
 	en := i18n.Get(domain.LangEN)
 	rofl := i18n.Get(domain.LangRofl)
+	sr := i18n.Get(domain.LangSR)
 
 	cases := []struct {
 		name string
@@ -38,6 +39,17 @@ func TestResolveIntent(t *testing.T) {
 		{"send trimmed and uppercase", ru, "  SEND onboarding all  ", intentSend},
 		{"sender is not send", ru, "sender", intentNone},
 		{"send with no space", ru, "sendoff", intentNone},
+		{"typed lang", ru, "lang", intentLang},
+		{"lang with arg", ru, "lang ru", intentLang},
+		{"lang trimmed and uppercase", ru, "  LANG rofl  ", intentLang},
+		{"language is not lang", ru, "language", intentNone},
+		{"langs is not lang", ru, "langs", intentNone},
+		{"typed help", ru, "help", intentHelp},
+		{"slash help", ru, "/help", intentHelp},
+		{"ru other button", ru, ru.BtnOther, intentHelp},
+		{"en other button", en, en.BtnOther, intentHelp},
+		{"rofl other button", rofl, rofl.BtnOther, intentHelp},
+		{"sr other button", sr, sr.BtnOther, intentHelp},
 		{"uppercase status", ru, "STATUS", intentStatus},
 		{"whitespace trimmed", ru, "  status  ", intentStatus},
 		{"foreign label does not match", en, ru.BtnStatus, intentNone},

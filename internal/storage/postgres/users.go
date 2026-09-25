@@ -66,6 +66,20 @@ func (r *UserRepo) Get(ctx context.Context, id int64) (domain.User, error) {
 	return u, nil
 }
 
+// SetLanguage stores an explicit interface-language override for one user. Unknown id
+// gives ErrNotFound.
+func (r *UserRepo) SetLanguage(ctx context.Context, id int64, lang domain.Lang) error {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE users SET ui_language = $2, updated_at = now() WHERE id = $1`, id, lang)
+	if err != nil {
+		return fmt.Errorf("set language for user %d: %w", id, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 // ListIDs returns the Telegram ids of every known user, oldest first.
 func (r *UserRepo) ListIDs(ctx context.Context) ([]int64, error) {
 	rows, err := r.pool.Query(ctx, `SELECT id FROM users ORDER BY created_at, id`)

@@ -78,23 +78,32 @@ func (s *ScenarioService) Current(ctx context.Context, userID int64) (domain.Sce
 	return st, node, true, nil
 }
 
+// Outcome: what one answer did. Running is false when the dialogue just ended, and the
+// work asked for by Scenario.Result has already run. Node is the next question while
+// Running is true. Mood is set when a money dialogue just finished, so bot can answer
+// with a phrase for the size of the move; MoodNone keeps the plain done reply.
+type Outcome struct {
+	Node    scenario.Node
+	Running bool
+	Mood    domain.Mood
+}
+
 // Answer: feeds one answer into the running dialogue. st is the pending state that
-// Current loaded, so the position is not read again. running is false when the dialogue
-// just ended; the work asked for by Scenario.Result has already run. While the dialogue
-// is still on, an error means the answer did not fit and the same node is asked again.
-func (s *ScenarioService) Answer(ctx context.Context, st domain.ScenarioState, answer string, now time.Time) (next scenario.Node, running bool, err error) {
+// Current loaded, so the position is not read again. While the dialogue is still on, an
+// error means the answer did not fit and the same node is asked again.
+func (s *ScenarioService) Answer(ctx context.Context, st domain.ScenarioState, answer string, now time.Time) (Outcome, error) {
 	sc, ok := scenario.ByName(st.ScenarioName)
 	if !ok {
-		return scenario.Node{}, false, s.Abort(ctx, st.UserID)
+		return Outcome{}, s.Abort(ctx, st.UserID)
 	}
 	node, ok := sc.Nodes[st.NodeID]
 	if !ok {
-		return scenario.Node{}, false, s.Abort(ctx, st.UserID)
+		return Outcome{}, s.Abort(ctx, st.UserID)
 	}
 
 	nextID, value, serr := scenario.Step(sc, st.NodeID, answer)
 	if serr != nil {
-		return scenario.Node{}, true, serr
+		return Outcome{Running: true}, serr
 	}
 
 	// Deadline rule needs the current time, which the FSM has no access to. The check
@@ -102,7 +111,7 @@ func (s *ScenarioService) Answer(ctx context.Context, st domain.ScenarioState, a
 	// question is asked again.
 	if node.Var == scenario.VarDeadline && value != "" {
 		if derr := checkDeadline(value, now); derr != nil {
-			return scenario.Node{}, true, fmt.Errorf("%w: %v", scenario.ErrBadAnswer, derr)
+			return Outcome{Running: true}, fmt.Errorf("%w: %v", scenario.ErrBadAnswer, derr)
 		}
 	}
 
@@ -110,7 +119,7 @@ func (s *ScenarioService) Answer(ctx context.Context, st domain.ScenarioState, a
 	// node, so an answer over the balance is refused and the question is asked again.
 	if sc.Result == scenario.ResultWithdraw && node.Var == scenario.VarAmount && value != "" {
 		if derr := s.checkOverdraw(ctx, st.UserID, st.Vars, value); derr != nil {
-			return scenario.Node{}, true, derr
+			return Outcome{Running: true}, derr
 		}
 	}
 
@@ -119,7 +128,7 @@ func (s *ScenarioService) Answer(ctx context.Context, st domain.ScenarioState, a
 	if value != "" {
 		if below := tierBelow(node.Var); below != "" {
 			if oerr := checkTierOrder(st.Vars[below], value); oerr != nil {
-				return scenario.Node{}, true, fmt.Errorf("%w: %v", ErrTierOrder, oerr)
+				return Outcome{Running: true}, fmt.Errorf("%w: %v", ErrTierOrder, oerr)
 			}
 		}
 	}
@@ -134,18 +143,18 @@ func (s *ScenarioService) Answer(ctx context.Context, st domain.ScenarioState, a
 
 	// No next node: the dialogue is over, run the finish work, drop the position.
 	if nextID == "" {
-		finishErr := s.finish(ctx, sc, st, now)
+		mood, finishErr := s.finish(ctx, sc, st, now)
 		if derr := s.states.Delete(ctx, st.UserID); derr != nil {
-			return scenario.Node{}, false, derr
+			return Outcome{}, derr
 		}
-		return scenario.Node{}, false, finishErr
+		return Outcome{Mood: mood}, finishErr
 	}
 
 	st.NodeID = nextID
 	if serr := s.states.Save(ctx, st); serr != nil {
-		return scenario.Node{}, true, serr
+		return Outcome{Running: true}, serr
 	}
-	return sc.Nodes[nextID], true, nil
+	return Outcome{Node: sc.Nodes[nextID], Running: true}, nil
 }
 
 // Abort: drops the running dialogue. No error when none was running.
@@ -165,31 +174,54 @@ func nodeOf(st domain.ScenarioState) (scenario.Node, bool) {
 
 // finish: the work Scenario.Result asks for when a dialogue ends. ResultNone does
 // nothing; ResultGoal stores a goal from the collected vars; ResultDeposit and
-// ResultWithdraw store a signed deposit for the picked goal. A zero amount cancels the
-// dialogue, so nothing is stored and ErrCancelled comes back.
-func (s *ScenarioService) finish(ctx context.Context, sc *scenario.Scenario, st domain.ScenarioState, now time.Time) error {
+// ResultWithdraw store a signed deposit for the picked goal and report the mood of the
+// move. A zero amount cancels the dialogue, so nothing is stored and ErrCancelled comes
+// back.
+func (s *ScenarioService) finish(ctx context.Context, sc *scenario.Scenario, st domain.ScenarioState, now time.Time) (domain.Mood, error) {
 	switch sc.Result {
 	case scenario.ResultGoal:
 		goal, err := goalFromVars(st)
 		if err != nil {
-			return err
+			return domain.MoodNone, err
 		}
 		_, err = s.savings.CreateGoal(ctx, goal, now)
-		return err
+		return domain.MoodNone, err
 	case scenario.ResultDeposit, scenario.ResultWithdraw:
 		d, err := depositFromVars(st, sc.Result == scenario.ResultWithdraw)
 		if err != nil {
-			return err
+			return domain.MoodNone, err
 		}
 		// Zero amount cancels the dialogue, so nothing is stored.
 		if d.Amount == 0 {
-			return ErrCancelled
+			return domain.MoodNone, ErrCancelled
+		}
+		mood, err := s.moneyMood(ctx, st.UserID, d, sc.Result == scenario.ResultWithdraw)
+		if err != nil {
+			return domain.MoodNone, err
 		}
 		_, err = s.savings.AddDeposit(ctx, st.UserID, d.GoalID, d.Amount, now)
-		return err
+		return mood, err
 	default:
-		return nil
+		return domain.MoodNone, nil
 	}
+}
+
+// moneyMood: the reply bucket for a finished money move. A deposit reads nothing, its
+// amounts are fixed; a withdrawal is measured against the saved total it comes out of, so
+// the lookup runs before the move is stored.
+// TODO: post-MVP cleanup. Balance reads the goal again in the same request, once from
+// AddDeposit and once from checkOverdraw; thread it out of checkOverdraw once these paths
+// matter.
+func (s *ScenarioService) moneyMood(ctx context.Context, userID int64, d domain.Deposit, withdraw bool) (domain.Mood, error) {
+	if !withdraw {
+		return domain.DepositMood(d.Amount), nil
+	}
+
+	saved, err := s.savings.Balance(ctx, userID, d.GoalID)
+	if err != nil {
+		return domain.MoodNone, err
+	}
+	return domain.WithdrawMood(-d.Amount, saved), nil
 }
 
 // checkDeadline: deadline must be at least tomorrow. A date of today or earlier is

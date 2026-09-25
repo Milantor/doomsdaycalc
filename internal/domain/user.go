@@ -26,6 +26,9 @@ type UserRepository interface {
 	Upsert(ctx context.Context, u User) (User, error)
 	// Get returns the user with the given Telegram id, or ErrNotFound.
 	Get(ctx context.Context, id int64) (User, error)
+	// SetLanguage stores an explicit interface-language override for one user, so the
+	// catalog no longer comes from the Telegram hint.
+	SetLanguage(ctx context.Context, id int64, lang Lang) error
 	// Delete hard-deletes the user and, via ON DELETE CASCADE, everything else
 	// that belongs to them.
 	Delete(ctx context.Context, id int64) error
