@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"strconv"
 	"strings"
@@ -46,6 +47,8 @@ const (
 	intentDataRemoveAll
 	intentBroadcast
 	intentSend
+	intentLang
+	intentHelp
 )
 
 // String: intent label for logs.
@@ -67,6 +70,10 @@ func (i intent) String() string {
 		return "broadcast"
 	case intentSend:
 		return "send"
+	case intentLang:
+		return "lang"
+	case intentHelp:
+		return "help"
 	default:
 		return "none"
 	}
@@ -94,15 +101,22 @@ func resolveIntent(m i18n.Messages, text string) intent {
 		return intentBroadcast
 	case "send":
 		return intentSend
+	case "lang":
+		return intentLang
+	case "/help", "help", strings.ToLower(m.BtnOther):
+		return intentHelp
 	}
 
-	// "send <scenario> <target>" and "broadcast <text>" carry arguments, so they are
-	// matched by prefix. The handlers split the arguments themselves.
+	// "send <scenario> <target>", "broadcast <text>" and "lang <arg>" carry arguments,
+	// so they are matched by prefix. The handlers split the arguments themselves.
 	if strings.HasPrefix(text, "send ") {
 		return intentSend
 	}
 	if strings.HasPrefix(text, "broadcast ") {
 		return intentBroadcast
+	}
+	if strings.HasPrefix(text, "lang ") {
+		return intentLang
 	}
 	return intentNone
 }
@@ -167,6 +181,10 @@ func (b *Bot) handlerFor(in intent) func(context.Context, sender, req) error {
 		return b.cmdBroadcast
 	case intentSend:
 		return b.cmdSend
+	case intentLang:
+		return b.cmdLang
+	case intentHelp:
+		return b.cmdHelp
 	default:
 		return b.onFallback
 	}
@@ -366,6 +384,11 @@ func (b *Bot) renderStatus(ctx context.Context, api sender, r req, goalID int64)
 	return b.reply(ctx, api, r, formatStatus(g, st, r.m), true)
 }
 
+// cmdHelp lists the commands the bot understands.
+func (b *Bot) cmdHelp(ctx context.Context, api sender, r req) error {
+	return b.reply(ctx, api, r, r.m.Help, true)
+}
+
 // cmdPrivacy explains what data the bot stores and why.
 // TODO: link to PP on website
 func (b *Bot) cmdPrivacy(ctx context.Context, api sender, r req) error {
@@ -379,6 +402,28 @@ func (b *Bot) cmdDataRemoveAll(ctx context.Context, api sender, r req) error {
 		return err
 	}
 	return b.reply(ctx, api, r, r.m.DataRemoved, true)
+}
+
+// cmdLang switches the interface language, or explains the command without an argument.
+// With one it stores the override and answers in the new language, menu included.
+func (b *Bot) cmdLang(ctx context.Context, api sender, r req) error {
+	trimmed := strings.TrimSpace(r.msg.Text)
+	i := strings.IndexByte(trimmed, ' ')
+	if i < 0 {
+		return b.reply(ctx, api, r, r.m.LangUsage, true)
+	}
+
+	lang, ok := i18n.ParseExplicit(strings.TrimSpace(trimmed[i+1:]))
+	if !ok {
+		return b.reply(ctx, api, r, r.m.LangUsage, true)
+	}
+	if err := b.deps.Users.SetLanguage(ctx, r.user.ID, lang); err != nil {
+		return err
+	}
+
+	m := i18n.Get(lang)
+	r.m = m
+	return b.reply(ctx, api, r, fmt.Sprintf(m.LangSet, lang), true)
 }
 
 // cmdBroadcast sends one text to every known user. Admin-only: "broadcast <text>".

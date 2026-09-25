@@ -14,7 +14,7 @@ import (
 // Default is used when the user language is unknown or unsupported.
 const Default = domain.LangRU
 
-// ParseLang maps a Telegram/BCP-47 tag ("ru", "en-US", "ru_RU") to a supported
+// ParseLang maps a Telegram/BCP-47 tag ("ru", "en-US", "sr-RS") to a supported
 // language. Only the primary subtag matters; anything unrecognized falls back to
 // Default.
 func ParseLang(code string) domain.Lang {
@@ -27,6 +27,8 @@ func ParseLang(code string) domain.Lang {
 		return domain.LangRU
 	case "en":
 		return domain.LangEN
+	case "sr":
+		return domain.LangSR
 	default:
 		return Default
 	}
@@ -39,4 +41,15 @@ func Resolve(override domain.Lang, tgCode string) domain.Lang {
 		return override
 	}
 	return ParseLang(tgCode)
+}
+
+// ParseExplicit maps an exact language name to a supported language. Only names in the
+// catalog are accepted, so the lang command has one argument per catalog entry. An
+// unknown name gives false.
+func ParseExplicit(name string) (domain.Lang, bool) {
+	lang := domain.Lang(strings.ToLower(strings.TrimSpace(name)))
+	if _, ok := catalog[lang]; ok {
+		return lang, true
+	}
+	return "", false
 }

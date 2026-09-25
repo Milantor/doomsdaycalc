@@ -36,6 +36,12 @@ func (s *UserService) Get(ctx context.Context, id int64) (domain.User, error) {
 	return s.users.Get(ctx, id)
 }
 
+// SetLanguage stores an explicit interface-language override, so the catalog no longer
+// comes from the Telegram hint.
+func (s *UserService) SetLanguage(ctx context.Context, id int64, lang domain.Lang) error {
+	return s.users.SetLanguage(ctx, id, lang)
+}
+
 // Delete removes the user. Related rows (goals, deposits, scenario state) cascade
 // away.
 func (s *UserService) Delete(ctx context.Context, id int64) error {

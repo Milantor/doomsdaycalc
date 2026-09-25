@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"slices"
@@ -199,6 +200,17 @@ func (f *fakeUserRepo) Get(_ context.Context, id int64) (domain.User, error) {
 		return domain.User{}, domain.ErrNotFound
 	}
 	return u, nil
+}
+
+// SetLanguage keeps the override. Unknown user gives ErrNotFound, matching the repo.
+func (f *fakeUserRepo) SetLanguage(_ context.Context, id int64, lang domain.Lang) error {
+	u, ok := f.users[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	u.UILanguage = lang
+	f.users[id] = u
+	return nil
 }
 
 // Delete drops the user.
@@ -749,6 +761,114 @@ func TestCmdBroadcastUsage(t *testing.T) {
 	}
 }
 
+// TestCmdLangUsage: lang without an argument lists the arguments and changes nothing. An
+// empty argument and an unknown name both fall back to the list.
+func TestCmdLangUsage(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	m := i18n.Get(domain.LangEN)
+
+	if _, err := env.bot.deps.Users.Touch(ctx, domain.User{ID: 100, LanguageCode: "en"}); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+
+	for _, text := range []string{"lang", "lang   ", "lang de", "lang ru extra"} {
+		env.sender.sent = nil
+		r := testReq(m, 100, 100, text)
+		if err := env.bot.cmdLang(ctx, env.sender, r); err != nil {
+			t.Fatalf("cmdLang(%q): %v", text, err)
+		}
+		if got := env.sender.texts(); !slices.Equal(got, []string{m.LangUsage}) {
+			t.Fatalf("cmdLang(%q) texts = %q, want [%q]", text, got, m.LangUsage)
+		}
+	}
+
+	u, err := env.users.Get(ctx, 100)
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	if u.UILanguage != "" {
+		t.Fatalf("ui_language = %q, want empty", u.UILanguage)
+	}
+}
+
+// TestCmdLangSwitches: lang with a known argument stores the override and answers in the
+// new language, keyboard included.
+func TestCmdLangSwitches(t *testing.T) {
+	cases := []struct {
+		name string
+		arg  string
+		want domain.Lang
+	}{
+		{"ru", "ru", domain.LangRU},
+		{"en", "en", domain.LangEN},
+		{"rofl", "rofl", domain.LangRofl},
+		{"uppercase rofl", "ROFL", domain.LangRofl},
+		{"sr", "sr", domain.LangSR},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			env := newTestEnv(t)
+			ctx := context.Background()
+			from := i18n.Get(domain.LangEN)
+
+			if _, err := env.bot.deps.Users.Touch(ctx, domain.User{ID: 100, LanguageCode: "en"}); err != nil {
+				t.Fatalf("seed user: %v", err)
+			}
+
+			r := testReq(from, 100, 100, "lang "+c.arg)
+			if err := env.bot.cmdLang(ctx, env.sender, r); err != nil {
+				t.Fatalf("cmdLang: %v", err)
+			}
+
+			u, err := env.users.Get(ctx, 100)
+			if err != nil {
+				t.Fatalf("get user: %v", err)
+			}
+			if u.UILanguage != c.want {
+				t.Fatalf("ui_language = %q, want %q", u.UILanguage, c.want)
+			}
+
+			want := fmt.Sprintf(i18n.Get(c.want).LangSet, c.want)
+			if got := env.sender.texts(); !slices.Equal(got, []string{want}) {
+				t.Fatalf("texts = %q, want [%q]", got, want)
+			}
+
+			// the confirmation carries the main keyboard in the new language
+			kb, ok := env.sender.sent[0].markup.(models.ReplyKeyboardMarkup)
+			if !ok {
+				t.Fatalf("no reply keyboard on the lang confirmation")
+			}
+			if kb.Keyboard[0][0].Text != i18n.Get(c.want).BtnWithdraw {
+				t.Fatalf("first button = %q, want the new language withdraw label", kb.Keyboard[0][0].Text)
+			}
+		})
+	}
+}
+
+// TestCmdHelp: help and the Other button send the help text in every language.
+func TestCmdHelp(t *testing.T) {
+	for _, lang := range []domain.Lang{domain.LangRU, domain.LangEN, domain.LangRofl, domain.LangSR} {
+		m := i18n.Get(lang)
+
+		env := newTestEnv(t)
+		ctx := context.Background()
+		r := testReq(m, 100, 100, "help")
+
+		if err := env.bot.cmdHelp(ctx, env.sender, r); err != nil {
+			t.Fatalf("%s: cmdHelp: %v", lang, err)
+		}
+		if got := env.sender.texts(); !slices.Equal(got, []string{m.Help}) {
+			t.Fatalf("%s: texts = %q, want [%q]", lang, got, m.Help)
+		}
+
+		// the Other button resolves to the same intent, so the router reaches cmdHelp
+		if resolveIntent(m, m.BtnOther) != intentHelp {
+			t.Fatalf("%s: Other button did not resolve to help", lang)
+		}
+	}
+}
+
 // TestNodeMarkup: a free-text node drops the keyboard, a button node becomes a reply
 // keyboard.
 func TestNodeMarkup(t *testing.T) {
@@ -774,7 +894,7 @@ func TestNodeMarkup(t *testing.T) {
 // TestMoodPhrase: a mood gives a phrase from its own pool in every language, MoodNone
 // gives the plain done line.
 func TestMoodPhrase(t *testing.T) {
-	for _, lang := range []domain.Lang{domain.LangRU, domain.LangEN, domain.LangRofl} {
+	for _, lang := range []domain.Lang{domain.LangRU, domain.LangEN, domain.LangRofl, domain.LangSR} {
 		m := i18n.Get(lang)
 
 		if got := moodPhrase(m, domain.MoodNone); got != m.ScenarioDone {

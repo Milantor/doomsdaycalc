@@ -19,6 +19,9 @@ func TestParseLang(t *testing.T) {
 		{"underscore variant", "ru_RU", domain.LangRU},
 		{"plain en", "en", domain.LangEN},
 		{"en with region", "en-US", domain.LangEN},
+		{"plain sr", "sr", domain.LangSR},
+		{"sr with region", "sr-RS", domain.LangSR},
+		{"sr latin variant", "sr-Latn", domain.LangSR},
 		{"empty falls back", "", Default},
 		{"unsupported falls back", "de", Default},
 	}
@@ -41,6 +44,7 @@ func TestResolve(t *testing.T) {
 		{"override wins over telegram", domain.LangRofl, "en-US", domain.LangRofl},
 		{"override wins over empty", domain.LangEN, "", domain.LangEN},
 		{"no override uses telegram", "", "en", domain.LangEN},
+		{"no override, serbian telegram", "", "sr", domain.LangSR},
 		{"no override, unknown telegram", "", "de", Default},
 	}
 	for _, c := range cases {
@@ -49,6 +53,43 @@ func TestResolve(t *testing.T) {
 				t.Fatalf("Resolve(%q, %q) = %q, want %q", c.override, c.tgCode, got, c.want)
 			}
 		})
+	}
+}
+
+// TestParseExplicit: an exact catalog name is accepted, an unknown name and an extra word
+// are rejected.
+func TestParseExplicit(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want domain.Lang
+		ok   bool
+	}{
+		{"ru", "ru", domain.LangRU, true},
+		{"en", "en", domain.LangEN, true},
+		{"rofl", "rofl", domain.LangRofl, true},
+		{"sr", "sr", domain.LangSR, true},
+		{"uppercase", "ROFL", domain.LangRofl, true},
+		{"padded", "  ru  ", domain.LangRU, true},
+		{"empty", "", "", false},
+		{"unknown", "de", "", false},
+		{"extra word", "ru extra", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := ParseExplicit(c.in)
+			if got != c.want || ok != c.ok {
+				t.Fatalf("ParseExplicit(%q) = (%q, %v), want (%q, %v)", c.in, got, ok, c.want, c.ok)
+			}
+		})
+	}
+
+	// every catalog entry is also a valid argument
+	for lang := range catalog {
+		got, ok := ParseExplicit(string(lang))
+		if !ok || got != lang {
+			t.Errorf("ParseExplicit(%q) = (%q, %v), want (%q, true)", lang, got, ok, lang)
+		}
 	}
 }
 
