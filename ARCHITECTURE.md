@@ -190,8 +190,10 @@ secrets in `/etc/doomsdaycalc/env` (root, mode 600) read through
 `EnvironmentFile=`. Service user `doomsdaycalc` has no shell. Deploy user
 `deploy` owns the binary dir and can restart the unit.
 
-Deploy step: upload `doomsdaycalc.new`, `mv` over the old file, restart, check
-`is-active`. Rollback is a rerun of the last passing Actions run.
+Deploy step: upload `doomsdaycalc.new`, `mv` over the old file, restart, then wait
+for the `bot started` log line. `Type=simple` marks the unit active before the app
+is ready, so the log line is the readiness signal. Rollback is a rerun of the last
+passing Actions run.
 
 Migrations run on startup, so a deploy needs no DB step. CI passes the git sha
 into the binary through `-ldflags -X main.version`.

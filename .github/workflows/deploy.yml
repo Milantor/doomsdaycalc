@@ -13,12 +13,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   checks:
     name: checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -32,10 +37,12 @@ jobs:
   deploy:
     name: deploy
     needs: checks
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -48,29 +55,33 @@ jobs:
       - name: deploy
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
           HOST: ${{ secrets.DEPLOY_HOST }}
           PORT: ${{ secrets.DEPLOY_PORT }}
           USER: ${{ secrets.DEPLOY_USER }}
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy
           chmod 600 ~/.ssh/deploy
-          ssh-keyscan -p "$PORT" "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          scp -i ~/.ssh/deploy -P "$PORT" doomsdaycalc "$USER@$HOST:/opt/doomsdaycalc/doomsdaycalc.new"
-          ssh -i ~/.ssh/deploy -p "$PORT" "$USER@$HOST" '
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          scp -i ~/.ssh/deploy -P "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes doomsdaycalc "$USER@$HOST:/opt/doomsdaycalc/doomsdaycalc.new"
+          ssh -i ~/.ssh/deploy -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes "$USER@$HOST" '
             set -eu
             chmod 755 /opt/doomsdaycalc/doomsdaycalc.new
             mv /opt/doomsdaycalc/doomsdaycalc.new /opt/doomsdaycalc/doomsdaycalc
+            since=$(date "+%Y-%m-%d %H:%M:%S")
             sudo systemctl restart doomsdaycalc
             ok=0
-            for i in 1 2 3 4 5 6 7 8 9 10; do
-              if sudo systemctl is-active --quiet doomsdaycalc; then ok=1; break; fi
+            for i in $(seq 1 20); do
+              if journalctl -u doomsdaycalc --since "$since" -o cat 2>/dev/null | grep -q "\"msg\":\"bot started\""; then ok=1; break; fi
               sleep 1
             done
-            sudo systemctl --no-pager --lines=10 status doomsdaycalc || true
+            journalctl -u doomsdaycalc --since "$since" -n 50 --no-pager || true
             if [ "$ok" -ne 1 ]; then
-              journalctl -u doomsdaycalc -n 50 --no-pager || true
+              echo "no ready signal after restart" >&2
               exit 1
             fi
           '
