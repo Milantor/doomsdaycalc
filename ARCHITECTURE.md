@@ -97,6 +97,14 @@ asks the amount again and reports `ErrOverdraw`; the bot shows the overdraw
 reply and repeats the question. `Balance` is the sum of the goals signed
 deposits, and a negative sum counts as nothing saved.
 
+A money move ends with a phrase for its size. `domain.Mood` buckets the move: a
+deposit by fixed amounts (5000 and 15000 whole units), a withdrawal by its share
+of the saved total it comes out of (10 and 25 percent). `Answer` reports the mood
+in `Outcome.Mood`, which also carries the next node and whether the dialogue runs
+on. A stored goal, a cancel and `ResultNone` leave it `MoodNone`. i18n holds one
+pool of phrases per mood and `TestCatalogComplete` forces all three languages;
+`moodPhrase` in bot picks one at random and falls back to the plain done line.
+
 `Result` says what a finished dialogue stores: `ResultGoal` saves a goal,
 `ResultDeposit` and `ResultWithdraw` save one signed deposit, `ResultNone`
 clears the position.

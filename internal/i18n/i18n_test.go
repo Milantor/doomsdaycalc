@@ -53,8 +53,9 @@ func TestResolve(t *testing.T) {
 }
 
 // TestCatalogComplete fails when a catalog entry has an empty field, catching a
-// forgotten translation before it becomes a blank button at runtime. Also checks
-// that Default is present.
+// forgotten translation before it becomes a blank button at runtime. A slice field is a
+// phrase pool, so it needs at least one non-empty phrase. Also checks that Default is
+// present.
 func TestCatalogComplete(t *testing.T) {
 	if _, ok := catalog[Default]; !ok {
 		t.Fatalf("catalog has no entry for Default (%q)", Default)
@@ -63,15 +64,44 @@ func TestCatalogComplete(t *testing.T) {
 		v := reflect.ValueOf(m)
 		typ := v.Type()
 		for i := 0; i < typ.NumField(); i++ {
-			if v.Field(i).String() == "" {
-				t.Errorf("language %q: field %s is empty", lang, typ.Field(i).Name)
+			name := typ.Field(i).Name
+			f := v.Field(i)
+			switch f.Kind() {
+			case reflect.String:
+				if f.String() == "" {
+					t.Errorf("language %q: field %s is empty", lang, name)
+				}
+			case reflect.Slice:
+				if f.Len() == 0 {
+					t.Errorf("language %q: pool %s is empty", lang, name)
+					continue
+				}
+				for j := 0; j < f.Len(); j++ {
+					if f.Index(j).String() == "" {
+						t.Errorf("language %q: pool %s has an empty phrase at %d", lang, name, j)
+					}
+				}
 			}
 		}
 	}
 }
 
+// TestMoodPools: every mood that carries phrases has a pool in the default catalog, so a
+// mood added to domain without phrases shows up here. MoodNone carries no phrases.
+func TestMoodPools(t *testing.T) {
+	for _, mood := range domain.Moods {
+		if pool := catalog[Default].MoodPhrases(mood); len(pool) == 0 {
+			t.Errorf("no phrases for mood %s", mood)
+		}
+	}
+	if pool := catalog[Default].MoodPhrases(domain.MoodNone); pool != nil {
+		t.Errorf("MoodNone has a pool of %d phrases", len(pool))
+	}
+}
+
 func TestGetFallback(t *testing.T) {
-	if got := Get("klingon"); got != catalog[Default] {
+	// Messages holds phrase pools, so it can no longer be compared with ==.
+	if got := Get("klingon"); !reflect.DeepEqual(got, catalog[Default]) {
 		t.Fatalf("Get(unknown) = %+v, want Default", got)
 	}
 }

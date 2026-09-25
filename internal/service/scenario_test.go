@@ -48,6 +48,14 @@ const testUser = 1
 // answer it. Keeps the Answer tests free of the state plumbing.
 func turn(t *testing.T, svc *ScenarioService, userID int64, text string) (scenario.Node, bool, error) {
 	t.Helper()
+	out, err := turnOutcome(t, svc, userID, text)
+	return out.Node, out.Running, err
+}
+
+// turnOutcome: like turn, but returns the whole answer, so a test can read the mood of a
+// finished money move.
+func turnOutcome(t *testing.T, svc *ScenarioService, userID int64, text string) (Outcome, error) {
+	t.Helper()
 	ctx := context.Background()
 	st, _, ok, err := svc.Current(ctx, userID)
 	if err != nil {
@@ -117,8 +125,8 @@ func TestScenarioServiceWalksOnboarding(t *testing.T) {
 	}
 }
 
-// TestScenarioServiceIntroTakesAnyAnswer: the intro takes any text, so a user who types
-// instead of tapping the button still moves on to the first question and stores nothing.
+// TestScenarioServiceIntroTakesAnyAnswer: the intro takes any text, so a typed word also
+// moves on to the first question and stores nothing.
 func TestScenarioServiceIntroTakesAnyAnswer(t *testing.T) {
 	svc, states, _ := newScenarioSvc()
 	ctx := context.Background()
@@ -392,6 +400,191 @@ func TestScenarioServiceWithdrawFinish(t *testing.T) {
 	if d := deposits.added[1]; d.Amount != -50000 {
 		t.Errorf("withdraw amount = %d, want -50000", d.Amount)
 	}
+}
+
+// TestScenarioServiceDepositMood: a deposit mood is set by fixed amounts, so the switch
+// points are 5000 and 15000 whole rubles.
+func TestScenarioServiceDepositMood(t *testing.T) {
+	cases := []struct {
+		name   string
+		amount string
+		want   domain.Mood
+	}{
+		{"tiny", "1", domain.MoodDepositSmall},
+		{"just below mid", "4999", domain.MoodDepositSmall},
+		{"at mid", "5000", domain.MoodDepositMid},
+		{"one above mid", "5001", domain.MoodDepositMid},
+		{"just below big", "14999", domain.MoodDepositMid},
+		{"at big", "15000", domain.MoodDepositBig},
+		{"one above big", "15001", domain.MoodDepositBig},
+		{"far over big", "1000000", domain.MoodDepositBig},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, _, _ := newDepositSvc()
+			ctx := context.Background()
+			if _, err := svc.BeginWithVars(ctx, testUser, "add_deposit", map[string]string{scenario.VarGoal: "7"}, testNow); err != nil {
+				t.Fatalf("BeginWithVars: %v", err)
+			}
+
+			out, err := turnOutcome(t, svc, testUser, c.amount)
+			if err != nil {
+				t.Fatalf("Answer: %v", err)
+			}
+			if out.Running {
+				t.Fatal("dialogue still running after the amount")
+			}
+			if out.Mood != c.want {
+				t.Fatalf("mood = %s, want %s", out.Mood, c.want)
+			}
+		})
+	}
+}
+
+// TestScenarioServiceWithdrawMood: a withdrawal mood is set by the share of the saved
+// total, 1000 rubles here.
+func TestScenarioServiceWithdrawMood(t *testing.T) {
+	cases := []struct {
+		name   string
+		amount string
+		want   domain.Mood
+	}{
+		{"tiny", "1", domain.MoodWithdrawSmall},
+		{"just below mid", "99", domain.MoodWithdrawSmall},
+		{"at mid", "100", domain.MoodWithdrawMid},
+		{"one above mid", "101", domain.MoodWithdrawMid},
+		{"just below big", "249", domain.MoodWithdrawMid},
+		{"at big", "250", domain.MoodWithdrawBig},
+		{"one above big", "251", domain.MoodWithdrawBig},
+		{"everything saved", "1000", domain.MoodWithdrawBig},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, _, deposits := newDepositSvc()
+			ctx := context.Background()
+			// 1000 rubles saved, so a whole percent is a whole ruble.
+			deposits.added = append(deposits.added, domain.Deposit{GoalID: 7, Amount: 100000})
+
+			if _, err := svc.BeginWithVars(ctx, testUser, "withdraw", map[string]string{scenario.VarGoal: "7"}, testNow); err != nil {
+				t.Fatalf("BeginWithVars: %v", err)
+			}
+
+			out, err := turnOutcome(t, svc, testUser, c.amount)
+			if err != nil {
+				t.Fatalf("Answer: %v", err)
+			}
+			if out.Running {
+				t.Fatal("dialogue still running after the amount")
+			}
+			if out.Mood != c.want {
+				t.Fatalf("mood = %s, want %s", out.Mood, c.want)
+			}
+		})
+	}
+}
+
+// TestScenarioServiceDepositMoodIgnoresGoal: a deposit mood comes from the amount only, so
+// a goal without targets still reports one.
+func TestScenarioServiceDepositMoodIgnoresGoal(t *testing.T) {
+	states := newFakeStateRepo()
+	goals := &fakeGoalRepo{}
+	// No targets at all: a deposit mood that needed the goal would fail here.
+	goals.created = append(goals.created, domain.Goal{ID: 7, UserID: testUser})
+	svc := NewScenarioService(states, NewSavingsService(goals, &fakeDepositRepo{}))
+	ctx := context.Background()
+
+	if _, err := svc.BeginWithVars(ctx, testUser, "add_deposit", map[string]string{scenario.VarGoal: "7"}, testNow); err != nil {
+		t.Fatalf("BeginWithVars: %v", err)
+	}
+
+	out, err := turnOutcome(t, svc, testUser, "15000")
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if out.Mood != domain.MoodDepositBig {
+		t.Fatalf("mood = %s, want %s", out.Mood, domain.MoodDepositBig)
+	}
+}
+
+// TestScenarioServiceMoodOnlyOnFinish: a mood comes back only when a money move was
+// stored, so a running dialogue, a stored goal, a cancel and a failed finish report
+// MoodNone.
+func TestScenarioServiceMoodOnlyOnFinish(t *testing.T) {
+	t.Run("running dialogue", func(t *testing.T) {
+		svc, _, _ := newScenarioSvc()
+		ctx := context.Background()
+		if _, err := svc.Begin(ctx, testUser, "add_goal", testNow); err != nil {
+			t.Fatalf("Begin: %v", err)
+		}
+
+		out, err := turnOutcome(t, svc, testUser, "New laptop")
+		if err != nil {
+			t.Fatalf("Answer: %v", err)
+		}
+		if !out.Running || out.Mood != domain.MoodNone {
+			t.Fatalf("outcome = {Running:%v Mood:%s}, want running and no mood", out.Running, out.Mood)
+		}
+	})
+
+	t.Run("stored goal", func(t *testing.T) {
+		svc, _, goals := newScenarioSvc()
+		ctx := context.Background()
+		if _, err := svc.Begin(ctx, testUser, "add_goal", testNow); err != nil {
+			t.Fatalf("Begin: %v", err)
+		}
+
+		var last Outcome
+		for _, ans := range []string{"New laptop", "2026-06-01", "10000", "20000", "30000"} {
+			out, err := turnOutcome(t, svc, testUser, ans)
+			if err != nil {
+				t.Fatalf("Answer(%q): %v", ans, err)
+			}
+			last = out
+		}
+		if last.Running || last.Mood != domain.MoodNone {
+			t.Fatalf("outcome = {Running:%v Mood:%s}, want finished and no mood", last.Running, last.Mood)
+		}
+		if len(goals.created) != 1 {
+			t.Fatalf("stored %d goals, want 1", len(goals.created))
+		}
+	})
+
+	t.Run("cancel", func(t *testing.T) {
+		svc, _, deposits := newDepositSvc()
+		ctx := context.Background()
+		if _, err := svc.BeginWithVars(ctx, testUser, "add_deposit", map[string]string{scenario.VarGoal: "7"}, testNow); err != nil {
+			t.Fatalf("BeginWithVars: %v", err)
+		}
+
+		out, err := turnOutcome(t, svc, testUser, "0")
+		if !errors.Is(err, ErrCancelled) {
+			t.Fatalf("err = %v, want ErrCancelled", err)
+		}
+		if out.Running || out.Mood != domain.MoodNone {
+			t.Fatalf("outcome = {Running:%v Mood:%s}, want finished and no mood", out.Running, out.Mood)
+		}
+		if len(deposits.added) != 0 {
+			t.Fatalf("stored %d deposits, want 0", len(deposits.added))
+		}
+	})
+
+	t.Run("failed finish", func(t *testing.T) {
+		svc, states, _ := newDepositSvc()
+		states.saved[testUser] = domain.ScenarioState{
+			UserID:       testUser,
+			ScenarioName: "add_deposit",
+			NodeID:       "ask_amount",
+			Vars:         map[string]string{},
+		}
+
+		out, err := turnOutcome(t, svc, testUser, "500")
+		if !errors.Is(err, domain.ErrNotFound) {
+			t.Fatalf("err = %v, want ErrNotFound", err)
+		}
+		if out.Mood != domain.MoodNone {
+			t.Fatalf("mood = %s, want none", out.Mood)
+		}
+	})
 }
 
 // TestScenarioServiceDepositWithoutGoal: a valid amount but no goal picked must fail

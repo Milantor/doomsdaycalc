@@ -47,6 +47,16 @@ type Messages struct {
 	AmountCancelled   string // money dialogue: zero amount, nothing was stored
 	Overdraw          string // withdraw: amount is over the saved total, the question repeats
 
+	// Motivation: the reply after a finished money move. One pool per mood, picked at
+	// random, so the same amount does not read the same twice. A deposit mood comes from
+	// fixed amounts, a withdrawal mood from the share of the saved total.
+	MoodDepositSmall  []string // deposit: under the mid amount
+	MoodDepositMid    []string // deposit: between the two amounts
+	MoodDepositBig    []string // deposit: at or over the big amount
+	MoodWithdrawSmall []string // withdraw: small share of the savings
+	MoodWithdrawMid   []string // withdraw: noticeable share of the savings
+	MoodWithdrawBig   []string // withdraw: large share of the savings
+
 	// Status screen.
 	GoalDone            string // status: goal has every tier reached
 	StatusSavedLabel    string // status line label: saved
@@ -107,6 +117,38 @@ var catalog = map[domain.Lang]Messages{
 		AmountCancelled:   "Ок, отменил.",
 		Overdraw:          "Больше, чем накоплено, снять нельзя.",
 
+		// motivation
+		MoodDepositSmall: []string{
+			"начало положено",
+			"копейка рубль бережёт",
+			"немного, но счёт идёт",
+		},
+		MoodDepositMid: []string{
+			"хороший взнос, темп держишь",
+			"вот это уже заметно",
+			"так и до цели недалеко",
+		},
+		MoodDepositBig: []string{
+			"ого, вот это рывок. уважение",
+			"такими темпами цель закроется раньше срока",
+			"мощно. так и надо",
+		},
+		MoodWithdrawSmall: []string{
+			"ладно, бывает",
+			"небольшая прореха, не страшно",
+			"вернём на место",
+		},
+		MoodWithdrawMid: []string{
+			"а вот это уже зря",
+			"так до цели не дойти",
+			"сбавь обороты, а то не накопишь",
+		},
+		MoodWithdrawBig: []string{
+			"так ты точно не накопишь",
+			"это большой откат назад",
+			"ты почти обнулил всё, к чему шёл",
+		},
+
 		// status
 		GoalDone:            "Цель пройдена!",
 		StatusSavedLabel:    "Отложено",
@@ -162,6 +204,38 @@ var catalog = map[domain.Lang]Messages{
 		ChooseGoal:        "Pick a goal:",
 		AmountCancelled:   "Okay, cancelled.",
 		Overdraw:          "You cannot take back more than is saved.",
+
+		// motivation
+		MoodDepositSmall: []string{
+			"a start is a start",
+			"every coin counts",
+			"small, but it counts",
+		},
+		MoodDepositMid: []string{
+			"nice one, keep it up",
+			"now thats more like it",
+			"solid, respect",
+		},
+		MoodDepositBig: []string{
+			"whoa, what a push. respect",
+			"at this rate the goal lands early",
+			"huge. keep going like this",
+		},
+		MoodWithdrawSmall: []string{
+			"fine, it happens",
+			"small dent, nothing fatal",
+			"we will put it back",
+		},
+		MoodWithdrawMid: []string{
+			"thats a shame",
+			"this way the goal stays out of reach",
+			"slow down or you will never get there",
+		},
+		MoodWithdrawBig: []string{
+			"you will never save anything like this",
+			"thats a big step back",
+			"you just wiped most of your progress",
+		},
 
 		// status
 		GoalDone:            "Goal reached!",
@@ -219,6 +293,38 @@ var catalog = map[domain.Lang]Messages{
 		AmountCancelled:   "чел...🥀🥀🥀",
 		Overdraw:          "больше чем накопил не снять 🥀",
 
+		// motivation
+		MoodDepositSmall: []string{
+			"ну хоть что-то",
+			"нищета detected, но похвально",
+			"ок жи есть",
+		},
+		MoodDepositMid: []string{
+			"о, уже похоже на человека",
+			"норм бабки занёс респект уважене",
+			"живём нах",
+		},
+		MoodDepositBig: []string{
+			"ого нихуя ты крутой ебать чел хорош ахуителен ваще легенда",
+			"ты че банк ограбил?? вызываю мусоров но уважаю",
+			"такими темпами ты купишь себе планету или хватит на первый платеж по ипотеке в мск",
+		},
+		MoodWithdrawSmall: []string{
+			"ладно, хуй с ним",
+			"по мелочи, живём",
+			"42 брат",
+		},
+		MoodWithdrawMid: []string{
+			"а вот это зря, чел",
+			"ой ой ой, куда собрался",
+			"так ты не накопишь даже на пиво",
+		},
+		MoodWithdrawBig: []string{
+			"ТЫ УМРЕШЬ В НИЩИТЕ.",
+			"поздравляю, ты официально бомж",
+			"ну ты и лох, блять. пиздос",
+		},
+
 		// status
 		GoalDone:            "цель закрыта, красава 🎉",
 		StatusSavedLabel:    "накопил",
@@ -246,4 +352,25 @@ func Get(lang domain.Lang) Messages {
 		return m
 	}
 	return catalog[Default]
+}
+
+// MoodPhrases: the phrase pool for one mood, nil for MoodNone. Picking one out of the
+// pool is up to the caller, so the random source stays out of the catalog.
+func (m Messages) MoodPhrases(mood domain.Mood) []string {
+	switch mood {
+	case domain.MoodDepositSmall:
+		return m.MoodDepositSmall
+	case domain.MoodDepositMid:
+		return m.MoodDepositMid
+	case domain.MoodDepositBig:
+		return m.MoodDepositBig
+	case domain.MoodWithdrawSmall:
+		return m.MoodWithdrawSmall
+	case domain.MoodWithdrawMid:
+		return m.MoodWithdrawMid
+	case domain.MoodWithdrawBig:
+		return m.MoodWithdrawBig
+	default:
+		return nil
+	}
 }
